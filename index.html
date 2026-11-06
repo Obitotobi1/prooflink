@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProofLink | Prove a wallet controls a web page, on GenLayer</title>
+<meta name="description" content="Link a wallet to a public web page. GenLayer validators fetch the page themselves and agree that a wallet-bound code is on it.">
+<style>
+:root{--bg:#0b0b0e;--card:#14141a;--line:#2a2a34;--fg:#f1f1f4;--mute:#9a9aa8;--acc:#a78bfa;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}
+@media (prefers-color-scheme: light){:root{--bg:#f6f6f9;--card:#fff;--line:#dcdce6;--fg:#15151c;--mute:#5d5d6d;--acc:#6d4fe0;--ok:#16a34a;--warn:#b45309;--bad:#dc2626}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:20px 16px 60px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:8px}
+h1{font-size:26px;margin:0}
+h2{font-size:17px;margin:0 0 12px}
+.sub{color:var(--mute);margin:4px 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+label{display:block;font-size:12px;color:var(--mute);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.04em}
+input,select{width:100%;background:transparent;color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit}
+button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:10px 16px;font:inherit;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button.danger{background:transparent;color:var(--bad);border:1px solid var(--bad)}
+button:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.grow{flex:1 1 220px}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all}
+.mute{color:var(--mute)}
+.chip{display:inline-block;padding:2px 10px;border-radius:99px;border:1px solid var(--line);font-size:12px;font-weight:600}
+.chip.PENDING{color:var(--warn)}.chip.VERIFIED{color:var(--ok);border-color:var(--ok)}.chip.FAILED{color:var(--bad)}.chip.REVOKED{color:var(--mute)}
+.chip.ok{color:var(--ok);border-color:var(--ok)}
+.item{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px;cursor:pointer}
+.item.sel{border-color:var(--acc)}
+.codebox{display:flex;gap:10px;align-items:center;border:1px dashed var(--acc);border-radius:10px;padding:10px 12px;margin:6px 0}
+.codebox .mono{font-size:15px;font-weight:700;flex:1}
+.tx{border-left:3px solid var(--acc);padding:6px 12px;margin:8px 0;background:rgba(167,139,250,.07);border-radius:0 8px 8px 0}
+.err{color:var(--bad)}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.tabs button{background:transparent;border:1px solid var(--line);color:var(--fg)}
+.tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+ol.how{margin:8px 0 0 18px;padding:0}
+ol.how li{margin:4px 0}
+small{color:var(--mute)}
+.big{font-size:22px;font-weight:800}
+a{color:var(--acc)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🔗 ProofLink</h1>
+    <div class="chip">GenLayer Studio network</div>
+  </header>
+  <p class="sub">Prove a wallet controls a public web page. Validators fetch the page themselves and must agree that a code tied to your wallet is on it. The result is an on-chain verified link that other contracts can check.</p>
+
+  <div class="card" id="boot">Loading GenLayer SDK…</div>
+
+  <div id="app" hidden>
+    <div class="card">
+      <h2>1. Contract and identity</h2>
+      <label>ProofLink contract address</label>
+      <input id="contract" spellcheck="false">
+      <div class="row" style="margin-top:12px">
+        <div class="grow">
+          <label>Acting as</label>
+          <select id="who">
+            <option value="A">Account A</option>
+            <option value="B">Account B</option>
+          </select>
+        </div>
+        <button class="ghost" id="newkeys">Reset demo accounts</button>
+      </div>
+      <p class="mono" style="margin:10px 0 0">A: <span id="addrA"></span></p>
+      <p class="mono" style="margin:2px 0 0">B: <span id="addrB"></span></p>
+      <small>Demo accounts are generated in your browser and kept in local storage. They are free on Studio. A claim belongs to the account that creates it, and the code is tied to that account's address.</small>
+    </div>
+
+    <div class="tabs">
+      <button class="on" data-tab="claims">My claims</button>
+      <button data-tab="new">New claim</button>
+      <button data-tab="check">Check a link</button>
+    </div>
+
+    <div id="tab-new" hidden>
+      <div class="card">
+        <h2>Claim a page</h2>
+        <label>Public https URL you can edit</label>
+        <input id="f_url" spellcheck="false" placeholder="https://raw.githubusercontent.com/you/repo/main/README.md">
+        <p class="mute" style="margin:10px 0 0"><small>Good pages: a public GitHub README (use the raw.githubusercontent.com link), a public gist, or any page where you can add a line of text. The page must be public. Only https links to public hosts are accepted: localhost, private IP addresses and links with passwords are refused.</small></p>
+        <div class="row" style="margin-top:14px"><button id="newBtn">Create claim</button></div>
+      </div>
+    </div>
+
+    <div id="tab-claims">
+      <div class="card">
+        <div class="row"><h2 style="margin:0" class="grow">Claims by the selected account</h2><button class="ghost" id="reload">Reload</button></div>
+        <div id="list" class="mute" style="margin-top:12px">No claims loaded yet.</div>
+      </div>
+      <div class="card" id="detail" hidden></div>
+    </div>
+
+    <div id="tab-check" hidden>
+      <div class="card">
+        <h2>Check a link</h2>
+        <p class="mute" style="margin-top:0">Anyone can check, no account needed. This is the same <span class="mono">is_verified</span> call that other contracts can make.</p>
+        <label>Owner address</label>
+        <input id="c_owner" spellcheck="false" placeholder="0x…">
+        <label>Page URL</label>
+        <input id="c_url" spellcheck="false" placeholder="https://…">
+        <div class="row" style="margin-top:14px"><button id="c_btn">Check</button><button class="ghost" id="c_example">Load the example</button></div>
+        <p id="c_out" style="margin-top:14px" class="mute"></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Transaction log</h2>
+      <div id="txlog" class="mute">Nothing sent yet.</div>
+    </div>
+  </div>
+  <p class="mute" style="text-align:center"><small>Built on GenLayer Intelligent Contracts · <a href="https://github.com/Obitotobi1/prooflink">source on GitHub</a></small></p>
+</div>
+
+<script type="module">
+const DEFAULT_CONTRACT = "0x6d236C46Ed58d5B5E211A4d5318fBE8fCceB10CE";
+const EXAMPLE_OWNER = "0xb2B565655Dd79A3b8aF76e846C22161bC47D044D";
+const EXAMPLE_URL = "https://raw.githubusercontent.com/Obitotobi1/prooflink/main/README.md";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch {} }
+};
+
+async function loadSdk() {
+  const tries = [
+    async () => [await import("https://esm.sh/genlayer-js"), await import("https://esm.sh/genlayer-js/chains")],
+    async () => [await import("https://cdn.jsdelivr.net/npm/genlayer-js/+esm"), await import("https://cdn.jsdelivr.net/npm/genlayer-js/chains/+esm")],
+  ];
+  let last;
+  for (const t of tries) { try { return await t(); } catch (e) { last = e; } }
+  throw last;
+}
+
+let sdk, chains, client, accounts = {}, current = "A", selected = null;
+
+function keyFor(slot) {
+  let k = store.get("pl_key_" + slot);
+  if (!k) { k = sdk.generatePrivateKey(); store.set("pl_key_" + slot, k); }
+  return k;
+}
+function makeClient() { client = sdk.createClient({ chain: chains.studionet, account: accounts[current] }); }
+const addr = () => $("contract").value.trim();
+
+function logTx(id, html, cls = "") {
+  const log = $("txlog");
+  if (log.classList.contains("mute")) { log.classList.remove("mute"); log.innerHTML = ""; }
+  let el = document.getElementById("tx_" + id);
+  if (!el) { el = document.createElement("div"); el.id = "tx_" + id; el.className = "tx"; log.prepend(el); }
+  el.className = "tx " + cls;
+  el.innerHTML = html;
+}
+
+// Full lifecycle: sign -> submitted -> consensus (ACCEPTED) -> FINALIZED.
+async function send(label, functionName, args, note) {
+  const id = Date.now() + Math.random().toString(16).slice(2, 6);
+  try {
+    logTx(id, `<b>${esc(label)}</b><br>1/3 Signing and submitting…`);
+    const hash = await client.writeContract({ address: addr(), functionName, args, value: 0n });
+    const base = `<b>${esc(label)}</b><br><span class="mono">${esc(hash)}</span><br>`;
+    logTx(id, base + "2/3 Submitted. " + (note || "Waiting for validators to reach consensus…"));
+    await client.waitForTransactionReceipt({ hash, status: "ACCEPTED", retries: 120, interval: 3000 });
+    logTx(id, base + "3/3 <b style='color:var(--ok)'>Accepted by consensus.</b> Waiting for finality…");
+    await refresh();
+    client.waitForTransactionReceipt({ hash, status: "FINALIZED", retries: 200, interval: 5000 })
+      .then(() => logTx(id, base + "<b style='color:var(--ok)'>Finalized.</b>"))
+      .catch(() => logTx(id, base + "Accepted. Finality is still pending."));
+    return true;
+  } catch (e) {
+    logTx(id, `<b>${esc(label)}</b><br><span class="err">Failed: ${esc(e?.shortMessage || e?.message || e)}</span>`, "err");
+    return false;
+  }
+}
+
+async function read(fn, args) { return client.readContract({ address: addr(), functionName: fn, args }); }
+async function readJson(fn, args) {
+  const raw = await read(fn, args);
+  return JSON.parse(typeof raw === "string" ? raw : JSON.stringify(raw));
+}
+
+async function refresh() {
+  const box = $("list");
+  box.innerHTML = "Loading…";
+  let items = [];
+  try { items = await readJson("get_claims_by_owner", [accounts[current].address]); }
+  catch (e) { box.innerHTML = `<span class="err">${esc(e?.message || e)}</span>`; return; }
+  if (!items.length) { box.innerHTML = "No claims yet for this account. Use the <b>New claim</b> tab."; $("detail").hidden = true; return; }
+  box.innerHTML = items.map((c) => `
+    <div class="item ${selected === c.id ? "sel" : ""}" data-id="${c.id}">
+      <div class="row"><b class="grow">#${c.id}</b><span class="chip ${esc(c.status)}">${esc(c.status)}</span></div>
+      <div class="mono mute">${esc(c.url)}</div>
+    </div>`).join("");
+  box.querySelectorAll(".item").forEach((el) => el.onclick = () => { selected = Number(el.dataset.id); refresh(); });
+  if (selected && items.some((c) => c.id === selected)) renderDetail(await readJson("get_claim", [selected]));
+  else $("detail").hidden = true;
+}
+
+function renderDetail(c) {
+  const d = $("detail"); d.hidden = false;
+  const canVerify = c.status === "PENDING" || c.status === "FAILED";
+  d.innerHTML = `
+    <div class="row"><h2 style="margin:0" class="grow">Claim #${esc(c.id)}</h2><span class="chip ${esc(c.status)}">${esc(c.status)}</span></div>
+    <label>Page</label><div class="mono">${esc(c.url)}</div>
+    <label>Your code (tied to your wallet)</label>
+    <div class="codebox"><span class="mono" id="codeText">${esc(c.code)}</span><button class="ghost" id="copyBtn">Copy</button></div>
+    <small>Verification attempts used: ${esc(c.attempts)} of 5</small>
+    ${c.status === "VERIFIED" ? `<p class="big" style="color:var(--ok)">Verified ✓</p><p class="mute">The validators found the code on the page. Any contract can now call <span class="mono">is_verified(owner, url)</span>.</p>` : ""}
+    ${canVerify ? `<ol class="how"><li>Add the code above anywhere on that page and save it. Plain text is fine.</li><li>Make sure the page is public.</li><li>Click <b>Verify</b>. Each validator fetches the page and they must agree.</li></ol>` : ""}
+    ${c.status === "FAILED" ? `<p class="mute"><small>Not found. Check the code is on the page and spelled exactly. Hosting sites can take a minute to update, so wait briefly and try again.</small></p>` : ""}
+    ${c.status === "REVOKED" ? `<p class="mute">This claim was revoked and no longer counts.</p>` : ""}
+    <div class="row" style="margin-top:14px">
+      ${canVerify ? `<button id="verifyBtn">Verify</button>` : ""}
+      ${c.status !== "REVOKED" ? `<button class="danger" id="revokeBtn">Revoke</button>` : ""}
+    </div>`;
+  $("copyBtn").onclick = async () => { try { await navigator.clipboard.writeText(c.code); $("copyBtn").textContent = "Copied"; } catch { $("copyBtn").textContent = "Select and copy"; } };
+  if ($("verifyBtn")) $("verifyBtn").onclick = () => send(`Verify claim #${c.id}`, "verify", [c.id], "Validators are fetching your page. This can take a minute or two.").then(refresh);
+  if ($("revokeBtn")) $("revokeBtn").onclick = () => { if (confirm("Revoke this claim? It will stop counting as verified.")) send(`Revoke claim #${c.id}`, "revoke", [c.id]).then(refresh); };
+}
+
+function bind() {
+  document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
+    document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
+    for (const t of ["claims", "new", "check"]) $("tab-" + t).hidden = t !== b.dataset.tab;
+  });
+  $("contract").value = store.get("pl_contract_v1") || DEFAULT_CONTRACT;
+  $("contract").onchange = () => { store.set("pl_contract_v1", addr()); selected = null; refresh(); };
+  $("who").onchange = () => { current = $("who").value; selected = null; makeClient(); refresh(); };
+  $("reload").onclick = refresh;
+  $("newkeys").onclick = () => { if (confirm("Generate new demo accounts? The old ones are lost.")) { store.set("pl_key_A", ""); store.set("pl_key_B", ""); location.reload(); } };
+  $("newBtn").onclick = async () => {
+    const u = $("f_url").value.trim();
+    if (!u.startsWith("https://")) { alert("Enter a public link that starts with https://"); return; }
+    const ok = await send("Create claim", "create_claim", [u]);
+    if (ok) document.querySelector('[data-tab="claims"]').click();
+  };
+  $("c_example").onclick = () => { $("c_owner").value = EXAMPLE_OWNER; $("c_url").value = EXAMPLE_URL; };
+  $("c_btn").onclick = async () => {
+    const o = $("c_owner").value.trim(), u = $("c_url").value.trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(o) || !u) { alert("Enter a valid owner address and a URL."); return; }
+    $("c_out").textContent = "Checking…"; $("c_out").classList.add("mute");
+    try {
+      const v = await read("is_verified", [o, u]);
+      const yes = v === true || v === "true";
+      $("c_out").classList.remove("mute");
+      $("c_out").innerHTML = yes ? `<span class="chip ok">Verified ✓</span> This wallet has a verified claim on that page.` : `<span class="chip FAILED">Not verified</span> No active, verified claim from this wallet for that exact URL.`;
+    } catch (e) { $("c_out").innerHTML = `<span class="err">${esc(e?.message || e)}</span>`; }
+  };
+}
+
+(async () => {
+  try {
+    const [a, b] = await loadSdk();
+    sdk = a; chains = b;
+    for (const s of ["A", "B"]) accounts[s] = sdk.createAccount(keyFor(s));
+    $("addrA").textContent = accounts.A.address;
+    $("addrB").textContent = accounts.B.address;
+    makeClient(); bind();
+    $("c_owner").value = EXAMPLE_OWNER; $("c_url").value = EXAMPLE_URL;
+    $("boot").hidden = true; $("app").hidden = false;
+    refresh();
+  } catch (e) {
+    $("boot").innerHTML = `<span class="err">Could not load the GenLayer SDK: ${esc(e?.message || e)}</span><br><small>Check your connection and reload.</small>`;
+  }
+})();
+</script>
+</body>
+</html>
