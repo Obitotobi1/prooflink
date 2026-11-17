@@ -160,23 +160,78 @@ function logTx(id, html, cls = "") {
   el.innerHTML = html;
 }
 
-// Full lifecycle: sign -> submitted -> consensus (ACCEPTED) -> FINALIZED.
-async function send(label, functionName, args, note) {
+
+// ---- Verification helpers: every write is checked by reading the record back ----
+const normTxt = (x) => String(x || "").toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+const probeOne = (fn, args) => async () => await readJson(fn, args);
+const probeCreate = (listFn, match) => async () => {
+  const list = await readJson(listFn, [accounts[current].address]);
+  return { n: list.length, stored: list.some(match) };
+};
+
+// ---- Outcome classification: success is a WHITELIST. Anything else is shown under its real name. ----
+const OK_STATUS = ["ACCEPTED", "FINALIZED"];
+const BAD_RESULT = /DISAGREE|TIMEOUT|NO_MAJORITY|VIOLATION|UNDETERMINED|CANCEL|REJECT|ERROR|FAIL|REVERT|ROLLBACK/i;
+const up = (x) => (typeof x === "string" ? x.toUpperCase() : "");
+
+// Returns { ok, label, detail }. ok is true ONLY when the network reports an accepted/finalized
+// status, no failure signal, and the on-chain record really changed.
+function classifyOutcome(rcpt, changed) {
+  const status = up(rcpt?.statusName) || up(rcpt?.status_name);
+  const results = [rcpt?.resultName, rcpt?.result_name, rcpt?.txExecutionResultName, rcpt?.data?.execution_result].map(up).filter(Boolean);
+  const bad = results.find((x) => BAD_RESULT.test(x));
+  if (status && !OK_STATUS.includes(status)) {
+    const names = { UNDETERMINED: "Undetermined: validators could not reach a decision", CANCELED: "Canceled", LEADER_TIMEOUT: "Timeout: the leader did not answer in time", VALIDATORS_TIMEOUT: "Timeout: validators did not answer in time" };
+    return { ok: false, label: names[status] || ("Not accepted: status " + status), detail: "No result was stored. The record on-chain is unchanged." };
+  }
+  if (bad) {
+    const names = { DISAGREE: "Validators disagreed", MAJORITY_DISAGREE: "Validators disagreed", NO_MAJORITY: "No majority among validators" };
+    const k = Object.keys(names).find((n) => bad.includes(n));
+    return { ok: false, label: k ? names[k] : ("Not successful: " + bad), detail: "No result was stored. The record on-chain is unchanged." };
+  }
+  if (changed === false) return { ok: false, label: "Ran, but no change was stored", detail: "The record is identical before and after. Validators may not have agreed, or the page could not be read. Try again." };
+  if (changed === null) return { ok: false, label: "Outcome could not be verified", detail: "The network did not confirm an accepted result and the record could not be read back. Check the transaction in the Explorer before relying on it." };
+  if (!status) return { ok: false, label: "Not confirmed: the network reported no status", detail: "A receipt with no ACCEPTED or FINALIZED status is never treated as a success, even if the record seems to have changed. Check the transaction in the Explorer before relying on it." };
+  return { ok: true, label: status === "FINALIZED" ? "Finalized" : "Accepted by validator consensus", detail: "" };
+}
+
+// Stages shown as separate lines: Submitted, Outcome (from the classification), Finality.
+async function send(label, functionName, args, note, probe) {
   const id = Date.now() + Math.random().toString(16).slice(2, 6);
+  const head = `<b>${esc(label)}</b><br>`;
+  const line = (ok, text) => `<div>${ok === true ? "<span style='color:var(--ok)'>✔</span>" : ok === false ? "<span class='err'>✖</span>" : "<span class='mute'>…</span>"} ${text}</div>`;
+  const read = async () => { if (!probe) return undefined; try { return JSON.stringify(await probe()); } catch { return null; } };
   try {
-    logTx(id, `<b>${esc(label)}</b><br>1/3 Signing and submitting…`);
+    const before = await read();
+    logTx(id, head + line(null, "Signing and submitting…"));
     const hash = await client.writeContract({ address: addr(), functionName, args, value: 0n });
-    const base = `<b>${esc(label)}</b><br><span class="mono">${esc(hash)}</span><br>`;
-    logTx(id, base + "2/3 Submitted. " + (note || "Waiting for validators to reach consensus…"));
-    await client.waitForTransactionReceipt({ hash, status: "ACCEPTED", retries: 120, interval: 3000 });
-    logTx(id, base + "3/3 <b style='color:var(--ok)'>Accepted by consensus.</b> Waiting for finality…");
+    const h = `<span class="mono">${esc(hash)}</span>`;
+    logTx(id, head + h + line(true, "Submitted") + line(null, note || "Waiting for validators to reach consensus…"));
+    let rcpt;
+    try {
+      rcpt = await client.waitForTransactionReceipt({ hash, status: "ACCEPTED", retries: 120, interval: 3000 });
+    } catch (e) {
+      logTx(id, head + h + line(true, "Submitted") + line(false, "<b>Timed out waiting for the network.</b> Nothing is confirmed. The transaction may still complete: reload and check, or look it up in the Explorer.") , "err");
+      return false;
+    }
+    const after = await read();
+    const changed = probe ? (before === null || after === null ? null : before !== after) : null;
+    const out = classifyOutcome(rcpt, changed);
+    logTx(id, head + h + line(true, "Submitted") + line(out.ok, `<b>${esc(out.label)}</b>`) + (out.detail ? `<div class="mute"><small>${esc(out.detail)}</small></div>` : "") + (out.ok ? line(null, "Waiting for finality (it can still be appealed until then)…") : ""), out.ok ? "" : "err");
     await refresh();
+    if (!out.ok) return false;
     client.waitForTransactionReceipt({ hash, status: "FINALIZED", retries: 200, interval: 5000 })
-      .then(() => logTx(id, base + "<b style='color:var(--ok)'>Finalized.</b>"))
-      .catch(() => logTx(id, base + "Accepted. Finality is still pending."));
+      .then(async (fin) => {
+        const f = classifyOutcome(fin, changed);
+        const finalStatus = up(fin?.statusName) || up(fin?.status_name);
+        const reallyFinal = finalStatus === "FINALIZED";
+        logTx(id, head + h + line(true, "Submitted") + line(f.ok, `<b>${esc(f.ok ? out.label : f.label)}</b>`) + (reallyFinal && f.ok ? line(true, "<b>Finalized</b>: this result is now permanent.") : line(f.ok ? null : false, f.ok ? "Finality not confirmed by the network yet." : esc(f.detail || "The final result is not a success."))), f.ok ? "" : "err");
+        refresh();
+      })
+      .catch(() => logTx(id, head + h + line(true, "Submitted") + line(out.ok, `<b>${esc(out.label)}</b>`) + line(null, "Finality is still pending. Check again later.")));
     return true;
   } catch (e) {
-    logTx(id, `<b>${esc(label)}</b><br><span class="err">Failed: ${esc(e?.shortMessage || e?.message || e)}</span>`, "err");
+    logTx(id, head + `<span class="err">Failed before it reached the chain: ${esc(e?.shortMessage || e?.message || e)}</span>`, "err");
     return false;
   }
 }
@@ -222,8 +277,8 @@ function renderDetail(c) {
       ${c.status !== "REVOKED" ? `<button class="danger" id="revokeBtn">Revoke</button>` : ""}
     </div>`;
   $("copyBtn").onclick = async () => { try { await navigator.clipboard.writeText(c.code); $("copyBtn").textContent = "Copied"; } catch { $("copyBtn").textContent = "Select and copy"; } };
-  if ($("verifyBtn")) $("verifyBtn").onclick = () => send(`Verify claim #${c.id}`, "verify", [c.id], "Validators are fetching your page. This can take a minute or two.").then(refresh);
-  if ($("revokeBtn")) $("revokeBtn").onclick = () => { if (confirm("Revoke this claim? It will stop counting as verified.")) send(`Revoke claim #${c.id}`, "revoke", [c.id]).then(refresh); };
+  if ($("verifyBtn")) $("verifyBtn").onclick = () => send(`Verify claim #${c.id}`, "verify", [c.id], "Validators are fetching your page. This can take a minute or two.", probeOne("get_claim", [c.id])).then(refresh);
+  if ($("revokeBtn")) $("revokeBtn").onclick = () => { if (confirm("Revoke this claim? It will stop counting as verified.")) send(`Revoke claim #${c.id}`, "revoke", [c.id], "Recording the revocation on-chain…", probeOne("get_claim", [c.id])).then(refresh); };
 }
 
 function bind() {
@@ -239,7 +294,7 @@ function bind() {
   $("newBtn").onclick = async () => {
     const u = $("f_url").value.trim();
     if (!u.startsWith("https://")) { alert("Enter a public link that starts with https://"); return; }
-    const ok = await send("Create claim", "create_claim", [u]);
+    const ok = await send("Create claim", "create_claim", [u], "Recording the claim on-chain, then reading it back to confirm it was stored…", probeCreate("get_claims_by_owner", (c) => c.url === u));
     if (ok) document.querySelector('[data-tab="claims"]').click();
   };
   $("c_example").onclick = () => { $("c_owner").value = EXAMPLE_OWNER; $("c_url").value = EXAMPLE_URL; };
